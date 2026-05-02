@@ -1,0 +1,338 @@
+# Getting Started
+
+```elixir
+Mix.install(
+  [
+    {:julia_elixir, path: Path.expand("..", __DIR__)}
+  ],
+  config: [
+    julia_elixir: [start_default_session: false]
+  ]
+)
+```
+
+## Install Julia Dependency
+
+The Julia worker needs `ErlangTerm.jl`. This cell installs it into Julia's
+default environment if it is missing.
+
+```elixir
+case System.find_executable("julia") do
+  nil ->
+    {:error, "Julia is not available on PATH"}
+
+  julia ->
+    {_, status} =
+      System.cmd(
+        julia,
+        [
+          "--startup-file=no",
+          "--history-file=no",
+          "-e",
+          """
+          import Pkg
+          try
+              @eval using ErlangTerm
+          catch
+              Pkg.add("ErlangTerm")
+          end
+          """
+        ],
+        stderr_to_stdout: true
+      )
+
+    if status == 0 do
+      :ok
+    else
+      {:error, "Could not install ErlangTerm.jl"}
+    end
+end
+```
+
+## What This Notebook Shows
+
+`julia_elixir` is a minimal Elixir to Julia bridge using:
+
+* a supervised BEAM Port
+* an out-of-process Julia worker
+* Erlang External Term Format as the wire format
+* `ErlangTerm.jl` on the Julia side
+
+The prototype intentionally supports arbitrary Julia evaluation. This is unsafe
+for untrusted input and should be treated like giving someone access to a local
+Julia REPL.
+
+## Environment Check
+
+```elixir
+%{
+  elixir: System.version(),
+  otp: :erlang.system_info(:otp_release) |> List.to_string(),
+  julia: System.find_executable("julia")
+}
+```
+
+```elixir
+System.cmd("julia", ["--version"])
+```
+
+## Start A Session
+
+The Mix application can start a default supervised session named `JuliaElixir`.
+This notebook disables that default and starts explicit named sessions so cells
+can be rerun more predictably.
+
+```elixir
+defmodule NotebookJulia do
+  def ensure_started(name) do
+    case Process.whereis(name) do
+      nil -> JuliaElixir.start(name: name)
+      pid -> {:ok, pid}
+    end
+  end
+
+  def stop(name) do
+    case Process.whereis(name) do
+      nil -> :ok
+      _pid -> JuliaElixir.stop(name)
+    end
+  end
+end
+
+{:ok, julia} = NotebookJulia.ensure_started(:showcase_julia)
+julia
+```
+
+## Basic Eval
+
+```elixir
+JuliaElixir.eval("1 + 2", server: :showcase_julia)
+```
+
+```elixir
+JuliaElixir.eval!("sqrt(81)", server: :showcase_julia)
+```
+
+## Stateful Session
+
+Values defined in `Main` remain available across calls because the Julia worker
+is long-lived.
+
+```elixir
+JuliaElixir.eval!("counter = 0", server: :showcase_julia)
+```
+
+```elixir
+for _ <- 1..5 do
+  JuliaElixir.eval!("counter += 1", server: :showcase_julia)
+end
+```
+
+```elixir
+JuliaElixir.eval!("counter", server: :showcase_julia)
+```
+
+## Define And Use Julia Functions
+
+```elixir
+JuliaElixir.eval!(
+  """
+  function hypotenuse(a, b)
+    sqrt(a^2 + b^2)
+  end
+  """,
+  server: :showcase_julia
+)
+```
+
+```elixir
+JuliaElixir.eval!("hypotenuse(3, 4)", server: :showcase_julia)
+```
+
+Simple numbers and booleans can be interpolated directly:
+
+```elixir
+a = 3
+b = 4
+c = 5
+t = true
+JuliaElixir.eval!("(hypotenuse(#{a}, #{b}) == #{c}) == #{t}", server: :showcase_julia)
+```
+
+## Interpolating Elixir Values Into Julia Snippets
+
+While simple numbers and booleans can be interpolated directly, structured Elixir values need
+to be rendered as Julia source. `JuliaElixir.literal/1` handles numbers,
+booleans, nil, strings, atoms, lists, tuples, and maps.
+
+```elixir
+%{
+  integer: JuliaElixir.literal(42),
+  float: JuliaElixir.literal(3.14),
+  boolean: JuliaElixir.literal(true),
+  nil: JuliaElixir.literal(nil),
+  list: JuliaElixir.literal([true, false, 1, 0]),
+  tuple: JuliaElixir.literal({:point, 3, 4}),
+  map: JuliaElixir.literal(%{label: "demo", active: true, missing: nil})
+}
+```
+
+```elixir
+a = 5
+b = 12
+
+JuliaElixir.eval!(
+  """
+  hypotenuse(
+    #{JuliaElixir.literal(a)},
+    #{JuliaElixir.literal(b)}
+  )
+  """,
+  server: :showcase_julia
+)
+```
+
+```elixir
+flags = [true, false, true]
+point = {3, 4}
+metadata = %{label: "demo", active: true, missing: nil}
+
+JuliaElixir.eval!(
+  """
+  flags = #{JuliaElixir.literal(flags)}
+  point = #{JuliaElixir.literal(point)}
+  metadata = #{JuliaElixir.literal(metadata)}
+
+  Dict(
+    :active => metadata[:active],
+    :false_count => count(x -> x == false, flags),
+    :label => metadata[:label],
+    :missing_is_nothing => isnothing(metadata[:missing]),
+    :norm => sqrt(point[1]^2 + point[2]^2),
+    :true_count => count(identity, flags)
+  )
+  """,
+  server: :showcase_julia
+)
+```
+
+## Direct Function Calls
+
+`call/3` resolves a function by name and invokes it with Elixir-provided
+arguments.
+
+```elixir
+JuliaElixir.call("sqrt", [144.0], module: "Base", server: :showcase_julia)
+```
+
+```elixir
+JuliaElixir.call("hypotenuse", [5, 12], server: :showcase_julia)
+```
+
+```elixir
+JuliaElixir.call("xor", [true, false], module: "Base", server: :showcase_julia)
+```
+
+## ETF-Friendly Data Round Trips
+
+The current bridge handles data types supported by `ErlangTerm.jl`: integers,
+floats, strings, booleans, atoms/symbols, tuples, lists, maps/dicts, and
+nil/nothing.
+
+```elixir
+JuliaElixir.eval!(
+  """
+  Dict(
+    :language => "Julia",
+    :version_major => VERSION.major,
+    :numbers => [1, 2, 3, 4],
+    :nested => Dict(:ok => true, :error => false, :note => "booleans stay booleans")
+  )
+  """,
+  server: :showcase_julia
+)
+```
+
+Julia can promote booleans to integers in mixed numeric arrays before the bridge
+can serialize them. Use `Any[...]` when preserving mixed boolean and integer
+values matters.
+
+```elixir
+%{
+  promoted_by_julia: JuliaElixir.eval!("[true, false, 1, 0]", server: :showcase_julia),
+  preserved_with_any: JuliaElixir.eval!("Any[true, false, 1, 0]", server: :showcase_julia)
+}
+```
+
+```elixir
+JuliaElixir.eval!(
+  """
+  (
+    :tuple_result,
+    123,
+    3.14,
+    "hello from Julia",
+    [10, 20, 30]
+  )
+  """,
+  server: :showcase_julia
+)
+```
+
+## Arbitrary Julia Evaluation
+
+Because this is a prototype, arbitrary Julia code is accepted.
+
+```elixir
+JuliaElixir.eval!(
+  """
+  using Dates
+
+  now_string = string(now())
+  "Julia says the current worker time is: " * now_string
+  """,
+  server: :showcase_julia
+)
+```
+
+## Error Handling
+
+Julia exceptions are returned as structured Elixir errors.
+
+```elixir
+JuliaElixir.eval("this_function_does_not_exist()", server: :showcase_julia)
+```
+
+```elixir
+try do
+  JuliaElixir.eval!("this_function_does_not_exist()", server: :showcase_julia)
+rescue
+  exception in JuliaElixir.Error ->
+    %{message: exception.message, details: exception.details}
+end
+```
+
+## Multiple Independent Sessions
+
+Each session owns a separate Julia OS process and keeps separate Julia state.
+
+```elixir
+{:ok, _} = NotebookJulia.ensure_started(:julia_a)
+{:ok, _} = NotebookJulia.ensure_started(:julia_b)
+
+JuliaElixir.eval!("value = \"session A\"", server: :julia_a)
+JuliaElixir.eval!("value = \"session B\"", server: :julia_b)
+
+%{
+  a: JuliaElixir.eval!("value", server: :julia_a),
+  b: JuliaElixir.eval!("value", server: :julia_b)
+}
+```
+
+## Stop Sessions
+
+```elixir
+NotebookJulia.stop(:showcase_julia)
+NotebookJulia.stop(:julia_a)
+NotebookJulia.stop(:julia_b)
+```

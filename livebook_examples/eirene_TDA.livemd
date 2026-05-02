@@ -1,0 +1,480 @@
+# Topological Data Analysis (TDA) using Eirene.jl
+
+```elixir
+Mix.install(
+  [
+    {:julia_elixir, path: Path.expand("..", __DIR__)},
+    {:kino, "~> 0.19.0"},
+    {:vega_lite, "~> 0.1.11"},
+    {:kino_vega_lite, "~> 0.1.13"}
+  ],
+  config: [
+    julia_elixir: [start_default_session: false]
+  ]
+)
+```
+
+## About This Notebook
+
+This notebook uses `julia_elixir` to drive
+[`Eirene.jl`](https://github.com/henselman-petrusek/Eirene.jl), a Julia package
+for persistent homology. It follows the spirit of Eirene's
+[`EXAMPLES.md`](https://github.com/henselman-petrusek/Eirene.jl/blob/master/EXAMPLES.md):
+
+* load the bundled noisy-circle point cloud
+* compute persistent homology
+* inspect barcode and persistence summaries
+* try generated point clouds and distance matrices
+* visualize ETF-friendly summaries with VegaLite
+
+The original examples use PlotlyJS plotting helpers. This notebook uses
+VegaLite on the Elixir side instead, which fits the current JuliaElixir
+prototype well: Julia does the topology and returns compact rows for plotting.
+
+## Install Julia Dependencies
+
+Eirene's registered release may not resolve on newer Julia versions because of
+old dependency bounds. This notebook installs Eirene from the current GitHub
+repository, whose `Project.toml` has newer compatibility bounds.
+
+First run can take several minutes because Eirene depends on PlotlyJS/WebIO and
+other packages.
+
+```elixir
+case System.find_executable("julia") do
+  nil ->
+    {:error, "Julia is not available on PATH"}
+
+  julia ->
+    {output, status} =
+      System.cmd(
+        julia,
+        [
+          "--startup-file=no",
+          "--history-file=no",
+          "-e",
+          """
+          import Pkg
+
+          function ensure_package(name; url=nothing)
+              try
+                  Base.eval(Main, :(using $(Symbol(name))))
+                  println("$(name) already installed")
+              catch
+                  if isnothing(url)
+                      Pkg.add(name)
+                  else
+                      Pkg.add(Pkg.PackageSpec(url=url))
+                  end
+              end
+          end
+
+          ensure_package("ErlangTerm")
+          ensure_package("Eirene"; url="https://github.com/henselman-petrusek/Eirene.jl")
+          """
+        ],
+        stderr_to_stdout: true
+      )
+
+    if status == 0 do
+      :ok
+    else
+      {:error, output}
+    end
+end
+```
+
+## Start A Julia Session
+
+```elixir
+defmodule EireneNotebook do
+  def ensure_started(name) do
+    case Process.whereis(name) do
+      nil -> JuliaElixir.start(name: name, startup_timeout: 20_000)
+      pid -> {:ok, pid}
+    end
+  end
+
+  def stop(name) do
+    case Process.whereis(name) do
+      nil -> :ok
+      _pid -> JuliaElixir.stop(name)
+    end
+  end
+end
+
+{:ok, pid} = EireneNotebook.ensure_started(:eirene_julia)
+pid
+```
+
+## Load Eirene
+
+```elixir
+JuliaElixir.eval!(
+  """
+  using Eirene
+  using DelimitedFiles
+  using Statistics
+
+  "Eirene loaded"
+  """,
+  server: :eirene_julia,
+  timeout: 120_000
+)
+```
+
+```elixir
+JuliaElixir.eval!("Eirene.example_function()", server: :eirene_julia)
+```
+
+## Noisy Circle Dataset
+
+Eirene ships a noisy circle CSV in `src/examples/noisycircle.csv`. The original
+example locates it with `eirenefilepath("noisycircle")` and loads it with
+`DelimitedFiles.readdlm`.
+
+```elixir
+JuliaElixir.eval!(
+  """
+  circle_path = eirenefilepath("noisycircle")
+  circle_points = readdlm(circle_path, ',')
+
+  circle_rows = [
+    Dict(:x => circle_points[1, i], :y => circle_points[2, i], :point => i)
+    for i in 1:size(circle_points, 2)
+  ]
+
+  Dict(
+    :path => circle_path,
+    :rows => size(circle_points, 1),
+    :cols => size(circle_points, 2),
+    :first_point => circle_points[:, 1],
+    :x_range => [minimum(circle_points[1, :]), maximum(circle_points[1, :])],
+    :y_range => [minimum(circle_points[2, :]), maximum(circle_points[2, :])]
+  )
+  """,
+  server: :eirene_julia
+)
+```
+
+```elixir
+circle_rows =
+  JuliaElixir.eval!(
+    """
+    circle_rows
+    """,
+    server: :eirene_julia
+  )
+
+VegaLite.new(width: 420, height: 420, title: "Noisy circle point cloud")
+|> VegaLite.data_from_values(circle_rows)
+|> VegaLite.mark(:point, filled: true, opacity: 0.8, size: 36)
+|> VegaLite.encode_field(:x, "x", type: :quantitative, scale: [zero: false])
+|> VegaLite.encode_field(:y, "y", type: :quantitative, scale: [zero: false])
+```
+
+## Compute Persistent Homology
+
+This cell mirrors the original example:
+
+```julia
+C = eirene(pointcloud, model = "pc")
+```
+
+The result is a large Julia dictionary, so we keep it in the Julia session as
+`circle_C` and return only a compact summary.
+
+```elixir
+JuliaElixir.eval!(
+  """
+  circle_C = eirene(circle_points, model="pc")
+
+  Dict(
+    :result_type => string(typeof(circle_C)),
+    :key_count => length(keys(circle_C)),
+    :all_keys => collect(keys(circle_C)),
+    :has_cyclerep => haskey(circle_C, "cyclerep"),
+    :input_metadata => Dict(
+      :maxrad => circle_C["input"]["maxrad"],
+      :minrad => circle_C["input"]["minrad"],
+      :numrad => circle_C["input"]["numrad"]
+    )
+  )
+  """,
+  server: :eirene_julia,
+  timeout: 180_000
+)
+```
+
+We can inspect individual entries of the dictionary in the Julia session and
+decode them on demand. `circle_C["input"]` contains Julia `Inf` and `-Inf`
+values. JuliaElixir maps those to Elixir atoms because BEAM ETF decoding does
+not accept infinity/NaN float payloads.
+
+```elixir
+JuliaElixir.eval!(
+  """
+  circle_C["input"]
+  """,
+  server: :eirene_julia
+)
+|> Map.take(["maxrad", "minrad", "numrad", "fastop", "model", "record"])
+```
+
+Alternatively, we can decode the whole dictionary and inspect it in Elixir (maybe not the most optimal for large ones):
+
+```elixir
+circle_C = JuliaElixir.eval!("circle_C", server: :eirene_julia)
+circle_C["input"] |> Map.take(["maxrad", "minrad", "numrad", "fastop", "model", "record"])
+```
+
+## Barcode Summaries
+
+Eirene exposes barcode data through `barcode(C, dim=...)`. Dimension 0 captures
+connected components. Dimension 1 captures loops; the noisy circle should have
+one prominent long-lived 1-dimensional class.
+
+```elixir
+JuliaElixir.eval!(
+  """
+  function barcode_summary(C, dim; n=5)
+      B = barcode(C, dim=dim)
+      lifetimes = B[:, 2] .- B[:, 1]
+      order = sortperm(lifetimes, rev=true)
+      top = order[1:min(n, length(order))]
+
+      Dict(
+        :dim => dim,
+        :rows => size(B, 1),
+        :cols => size(B, 2),
+        :top_class_indices => top,
+        :top_births => B[top, 1],
+        :top_deaths => B[top, 2],
+        :top_lifetimes => lifetimes[top]
+      )
+  end
+
+  function barcode_rows(C, dim)
+      B = barcode(C, dim=dim)
+      [
+        Dict(
+          :class => i,
+          :dim => dim,
+          :birth => B[i, 1],
+          :death => B[i, 2],
+          :lifetime => B[i, 2] - B[i, 1]
+        )
+        for i in 1:size(B, 1)
+      ]
+  end
+
+  Dict(
+    :h0 => barcode_summary(circle_C, 0),
+    :h1 => barcode_summary(circle_C, 1)
+  )
+  """,
+  server: :eirene_julia
+)
+```
+
+```elixir
+h1_barcode_rows =
+  JuliaElixir.eval!("barcode_rows(circle_C, 1)", server: :eirene_julia)
+  |> Enum.sort_by(& &1.lifetime, :desc)
+
+VegaLite.new(width: 620, height: 280, title: "Noisy circle H1 lifetimes")
+|> VegaLite.data_from_values(h1_barcode_rows)
+|> VegaLite.mark(:bar)
+|> VegaLite.encode_field(:x, "class", type: :ordinal, sort: "-y", title: "class")
+|> VegaLite.encode_field(:y, "lifetime", type: :quantitative, title: "death - birth")
+|> VegaLite.encode_field(:color, "lifetime", type: :quantitative, legend: nil)
+```
+
+```elixir
+top_h1_rows = Enum.take(h1_barcode_rows, 12)
+
+VegaLite.new(width: 620, height: 300, title: "Top H1 barcode intervals")
+|> VegaLite.data_from_values(top_h1_rows)
+|> VegaLite.mark(:bar)
+|> VegaLite.encode_field(:y, "class", type: :ordinal, sort: "-x", title: "class")
+|> VegaLite.encode_field(:x, "birth", type: :quantitative, title: "birth")
+|> VegaLite.encode_field(:x2, "death")
+|> VegaLite.encode_field(:color, "lifetime", type: :quantitative)
+```
+
+## Interpolate Elixir Options Into Julia
+
+`JuliaElixir.literal/1` is useful when a Livebook widget or Elixir variable
+controls the Julia computation.
+
+```elixir
+opts = %{
+  model: "pc",
+  maxdim: 1
+}
+
+JuliaElixir.eval!(
+  """
+  opts = #{JuliaElixir.literal(opts)}
+
+  circle_C_from_elixir_opts = eirene(
+    circle_points,
+    model=opts[:model],
+    maxdim=opts[:maxdim]
+  )
+
+  barcode_summary(circle_C_from_elixir_opts, 1)
+  """,
+  server: :eirene_julia,
+  timeout: 180_000
+)
+```
+
+## Generated Clouds
+
+Eirene also includes generators such as `noisycircle()`, `noisycircle3()`,
+`torus(...)`, `noisytorus(...)`, `sphere()`, and several distance-matrix
+examples.
+
+```elixir
+JuliaElixir.eval!(
+  """
+  generated_circle = noisycircle()
+  generated_circle3 = noisycircle3()
+  small_torus = torus(m=12, n=8, mrad=1, nrad=0.2)
+
+  small_torus_rows = [
+    Dict(:x => small_torus[1, i], :y => small_torus[2, i], :z => small_torus[3, i], :point => i)
+    for i in 1:size(small_torus, 2)
+  ]
+
+  Dict(
+    :noisycircle_size => collect(size(generated_circle)),
+    :noisycircle3_size => collect(size(generated_circle3)),
+    :small_torus_size => collect(size(small_torus)),
+    :small_torus_first_point => small_torus[:, 1]
+  )
+  """,
+  server: :eirene_julia
+)
+```
+
+```elixir
+small_torus_rows =
+  JuliaElixir.eval!("small_torus_rows", server: :eirene_julia)
+
+VegaLite.new(width: 420, height: 360, title: "Generated torus projected to x/y")
+|> VegaLite.data_from_values(small_torus_rows)
+|> VegaLite.mark(:point, filled: true, size: 60)
+|> VegaLite.encode_field(:x, "x", type: :quantitative, scale: [zero: false])
+|> VegaLite.encode_field(:y, "y", type: :quantitative, scale: [zero: false])
+|> VegaLite.encode_field(:color, "z", type: :quantitative, title: "z")
+```
+
+## Distance Matrix Examples
+
+Eirene's examples also mention distance matrices such as matching complexes,
+chessboard complexes, and random zero-dimensional examples.
+
+_Warning:_ The upstream `matchingcomplex_symmat(m, n)` helper currently errors on newer
+Julia/Eirene dependency combinations because it references an unqualified
+`combinations` function.
+
+```elixir
+JuliaElixir.eval!(
+  """
+  # mc = matchingcomplex_symmat(m, n) # errors in v1.4.0
+  chessboard = chessboardcomplex_symmat(numrows=3, numcols=5)
+  zero_d = zerodrandmat(10)
+
+  Dict(
+    :chessboard_rows => size(chessboard, 1),
+    :chessboard_cols => size(chessboard, 2),
+    :zerod_rows => size(zero_d, 1),
+    :zerod_cols => size(zero_d, 2),
+    :zerod_first_row => zero_d[1, :]
+  )
+  """,
+  server: :eirene_julia
+)
+```
+
+```elixir
+zero_d_rows =
+  JuliaElixir.eval!(
+    """
+    [
+      Dict(:i => i, :j => j, :distance => zero_d[i, j])
+      for i in 1:size(zero_d, 1)
+      for j in 1:size(zero_d, 2)
+    ]
+    """,
+    server: :eirene_julia
+  )
+
+VegaLite.new(width: 360, height: 360, title: "Random zero-dimensional distance matrix")
+|> VegaLite.data_from_values(zero_d_rows)
+|> VegaLite.mark(:rect)
+|> VegaLite.encode_field(:x, "i", type: :ordinal, title: "row")
+|> VegaLite.encode_field(:y, "j", type: :ordinal, title: "column")
+|> VegaLite.encode_field(:color, "distance", type: :quantitative)
+```
+
+## Optional PlotlyJS Comparison
+
+Eirene's native examples still expose PlotlyJS helpers like `ezplot_pjs`,
+`plotbarcode_pjs`, `plotpersistencediagram_pjs`, and `plotclassrep_pjs`. This
+prototype notebook does not need them, but this cell shows they can still run
+inside Julia state if your environment supports them.
+
+```elixir
+JuliaElixir.eval!(
+  """
+  circle_barcode_plot = plotbarcode_pjs(circle_C, dim=1)
+
+  Dict(
+    :plot_type => string(typeof(circle_barcode_plot)),
+    :note => "Plot object is stored in Julia as circle_barcode_plot"
+  )
+  """,
+  server: :eirene_julia,
+  timeout: 120_000
+)
+```
+
+Otherwise, we can always plot barcodes (among others) with Kino:
+
+```elixir
+circle_h1_barcode_for_kino =
+  JuliaElixir.eval!(
+    """
+    barcode_rows(circle_C, 1)
+    """,
+    server: :eirene_julia
+  )
+  |> Enum.sort_by(& &1.lifetime, :desc)
+  |> Enum.with_index(1)
+  |> Enum.map(fn {row, rank} -> Map.put(row, :rank, rank) end)
+
+VegaLite.new(width: 700, height: 360, title: "Kino/VegaLite H1 barcode for circle_C")
+|> VegaLite.data_from_values(circle_h1_barcode_for_kino)
+|> VegaLite.mark(:bar, height: 4)
+|> VegaLite.encode_field(:y, "rank",
+  type: :ordinal,
+  sort: "ascending",
+  title: "class ranked by lifetime"
+)
+|> VegaLite.encode_field(:x, "birth", type: :quantitative, title: "filtration value")
+|> VegaLite.encode_field(:x2, "death")
+|> VegaLite.encode_field(:color, "lifetime",
+  type: :quantitative,
+  title: "lifetime"
+)
+|> VegaLite.encode_field(:tooltip, "class", type: :ordinal)
+```
+
+## Stop Session
+
+```elixir
+EireneNotebook.stop(:eirene_julia)
+```

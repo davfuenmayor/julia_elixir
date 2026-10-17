@@ -1,9 +1,25 @@
+# Mix build, test and package output
 /_build/
-/cover/
 /deps/
+/cover/
 /doc/
-/.elixir_ls/
+/tmp/
+/julia_elixir-*.tar
+/julia_elixir-*.tar.gz
 erl_crash.dump
 *.ez
 *.beam
-/*.tar
+
+# Local notebook state and optional repo-local Julia caches
+/.livebook/
+/.cache/
+/.julia/
+
+# Editor and desktop files
+/.elixir_ls/
+/.vscode/
+/.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo

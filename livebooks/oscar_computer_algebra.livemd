@@ -35,43 +35,23 @@ OSCAR is a large Julia package. First install and precompile can take several
 minutes.
 
 ```elixir
-case System.find_executable("julia") do
-  nil ->
-    {:error, "Julia is not available on PATH"}
+IO.puts("""
+First-run notice
+OSCAR requires Linux or macOS. On Windows, run Livebook and Julia inside WSL:
+https://www.oscar-system.org/install/win/
+Internet access and a writable cache are required. Setup downloads Julia
+(about 220–320 MB) and large algebra dependencies; allow several GB of free disk space.
+Installation and precompilation can take tens of minutes. Let setup finish;
+later runs reuse cached downloads and precompiled packages. Some algebra cells
+also take time to compile on first use in each Julia session.
+Notebook runs are verified on Linux x86-64; native macOS and ARM64 notebook
+validation is still pending.
+""")
 
-  julia ->
-    {output, status} =
-      System.cmd(
-        julia,
-        [
-          "--startup-file=no",
-          "--history-file=no",
-          "-e",
-          """
-          import Pkg
-
-          function ensure_package(name)
-              try
-                  Base.eval(Main, :(using $(Symbol(name))))
-                  println("$(name) already installed")
-              catch
-                  Pkg.add(name)
-              end
-          end
-
-          ensure_package("ErlangTerm")
-          ensure_package("Oscar")
-          """
-        ],
-        stderr_to_stdout: true
-      )
-
-    if status == 0 do
-      :ok
-    else
-      {:error, output}
-    end
-end
+# On Windows, run Livebook inside WSL: OSCAR does not support native Windows.
+cache = to_string(:filename.basedir(:user_cache, ~c"julia_elixir"))
+System.put_env("JULIA_PROJECT", Path.join(cache, "notebooks/oscar"))
+:ok = JuliaElixir.setup(packages: ["Oscar"])
 ```
 
 ## Start A Julia Session

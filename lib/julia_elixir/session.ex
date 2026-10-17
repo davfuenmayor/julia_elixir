@@ -31,11 +31,11 @@ defmodule JuliaElixir.Session do
   Options:
 
   * `:name` - GenServer registration name.
-  * `:julia` - Julia executable path. Defaults to config `:julia` or `"julia"`.
+  * `:julia` - executable override. Defaults to a checksum-verified cached Julia.
   * `:worker_path` - path to `julia_worker.jl`.
   * `:julia_args` - extra arguments before the worker path.
   * `:startup_timeout` - timeout for the initial worker ping. Defaults to
-    config `:startup_timeout` or `5_000`.
+    config `:startup_timeout` or `30_000`, after runtime preparation.
   """
   @spec start_link([option()]) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -57,7 +57,7 @@ defmodule JuliaElixir.Session do
 
   @impl true
   def init(opts) do
-    julia = Keyword.get(opts, :julia, Application.get_env(:julia_elixir, :julia, "julia"))
+    julia = JuliaElixir.Runtime.executable(opts)
     worker_path = Keyword.get(opts, :worker_path, default_worker_path())
     julia_args = Keyword.get(opts, :julia_args, ["--startup-file=no", "--history-file=no"])
 
@@ -65,7 +65,7 @@ defmodule JuliaElixir.Session do
       Keyword.get(
         opts,
         :startup_timeout,
-        Application.get_env(:julia_elixir, :startup_timeout, 5_000)
+        Application.get_env(:julia_elixir, :startup_timeout, 30_000)
       )
 
     port =

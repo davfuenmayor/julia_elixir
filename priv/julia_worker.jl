@@ -1,6 +1,7 @@
 #!/usr/bin/env julia
 
-using ErlangTerm
+include(joinpath(@__DIR__, "vendor", "ErlangTerm", "src", "ErlangTerm.jl"))
+import .ErlangTerm
 
 const STDOUT_HANDLE = stdout
 const STDERR_HANDLE = stderr
@@ -105,7 +106,7 @@ function julia_value(value)
 end
 
 function reply_ok(request_id, value)
-    write_frame(STDOUT_HANDLE, serialize((:ok, request_id, beam_value(value))))
+    write_frame(STDOUT_HANDLE, ErlangTerm.serialize((:ok, request_id, beam_value(value))))
 end
 
 function reply_error(request_id, err, bt = catch_backtrace())
@@ -115,7 +116,7 @@ function reply_error(request_id, err, bt = catch_backtrace())
         :stacktrace => sprint(Base.show_backtrace, bt),
     )
 
-    write_frame(STDOUT_HANDLE, serialize((:error, request_id, beam_value(details))))
+    write_frame(STDOUT_HANDLE, ErlangTerm.serialize((:error, request_id, beam_value(details))))
 end
 
 function eval_in_main(code::String)
@@ -163,7 +164,7 @@ function main()
     while true
         payload = read_frame(stdin)
         payload === nothing && break
-        request = deserialize(payload)
+        request = ErlangTerm.deserialize(payload)
         handle_request(request)
     end
 end

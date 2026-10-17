@@ -27,19 +27,21 @@ It is not a sandbox.
 
 ## Requirements
 
-- Elixir 1.14+
-- Julia available on `PATH`
-- Julia package `ErlangTerm`
+- Elixir 1.14+ and OTP 25+
+- Internet access on first use, and writable cache and Julia package directories
 
-Install the Julia dependency once:
+Julia 1.13.2 is downloaded automatically from Julia's official distribution,
+verified with a pinned SHA-256 checksum, and reused from the user cache. No
+Julia installation or compiler is required. The ETF transport is bundled.
 
-```julia
-import Pkg
-Pkg.add("ErlangTerm")
-```
+Automatic downloads cover Linux glibc x86-64/ARM64, macOS Intel/Apple Silicon,
+and Windows x86-64. musl and Windows ARM64 are not supported automatically.
+This is a delivery matrix, not a claim that every target has been tested;
+see [MULTIPLATFORM.md](MULTIPLATFORM.md) for validation and remaining checks.
 
-If your Julia project uses a custom environment, start sessions with a matching
-`--project=...` argument.
+The initial runtime download is roughly 220–320 MB. Scientific packages,
+particularly OSCAR, need additional downloads, disk space and precompilation
+time. Subsequent runs reuse them.
 
 ## Installation
 
@@ -128,17 +130,24 @@ interpolate untrusted input into Julia source.
 
 ## Livebook Examples
 
-Example notebooks are included in `livebook_examples/`:
+Example notebooks are included in `livebooks/`:
 
 - `getting_started.livemd` covers the core bridge workflow.
 - `eirene_TDA.livemd` covers topological data analysis and persistent homology.
 - `oscar_computer_algebra.livemd` covers computer algebra topics including
   matroids and finite/Galois fields.
 
-Open them from Livebook and run the setup cells first. The Eirene notebook
-installs Eirene from GitHub because the registered release may not resolve on
-newer Julia versions. The OSCAR notebook installs OSCAR, which is large and may
-take several minutes to precompile on first run.
+Open a notebook **from this checkout** in Livebook and choose **Evaluate all**.
+Setup obtains Julia and the required packages automatically; the first run
+can take many minutes, especially for OSCAR. Keep the notebook beside its parent
+project directory so its local dependency can be found. Merely importing the notebook text into
+an unrelated directory does not copy the project.
+
+Eirene uses a pinned upstream revision for modern Julia compatibility. The two
+science notebooks use separate cached Julia projects to keep dependencies apart.
+OSCAR supports Linux and macOS; Windows users must run **Livebook and Julia inside
+WSL**, following [OSCAR's Windows instructions](https://www.oscar-system.org/install/win/).
+The core bridge also supports native Windows.
 
 ## Supervision
 
@@ -181,8 +190,8 @@ exits.
 ## Configuration
 
 By default, the application does **not** auto-start a Julia process. This avoids
-surprising host applications at boot time when Julia or `ErlangTerm.jl` is not
-installed.
+downloads and worker processes at application boot. Setup or starting a session
+obtains the runtime when needed.
 
 You can opt into a default supervised session registered as `JuliaElixir`:
 
@@ -203,6 +212,24 @@ JuliaElixir.Session.start_link(
   startup_timeout: 20_000
 )
 ```
+
+To prepare packages explicitly, call `JuliaElixir.setup(packages: ["Oscar"])`.
+Julia's usual project and depot settings apply, including `JULIA_PROJECT` and
+`JULIA_DEPOT_PATH`. A custom session's `--project` must match the environment
+where its packages were installed.
+
+To use an existing or locally compiled Julia, set `JULIA_ELIXIR_EXECUTABLE` to
+its executable, configure `:julia`, or pass `julia: "/path/to/julia"` to a
+session. macOS and Windows users can follow Julia's
+[source build instructions](https://docs.julialang.org/en/v1/devdocs/build/build/)
+and select the resulting binary the same way. Keep its complete runtime directory;
+copying only the executable is insufficient. A local build can target your CPU,
+but should be validated with your packages before replacing the pinned runtime.
+
+`JULIA_ELIXIR_CACHE` relocates downloaded runtimes. For offline installation,
+`JULIA_ELIXIR_ARCHIVE` selects the official archive for your platform, still
+checked against the pinned checksum. Package dependencies must also be cached.
+`JULIA_ELIXIR_CACERTS` (or `SSL_CERT_FILE`) selects a PEM CA bundle when needed.
 
 ## Data Mapping
 

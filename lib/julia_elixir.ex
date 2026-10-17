@@ -18,6 +18,9 @@ defmodule JuliaElixir do
 
   alias JuliaElixir.Session
 
+  @doc "Prepares Julia and optionally installs named Julia packages for notebook sessions."
+  def setup(opts \\ []), do: JuliaElixir.Runtime.setup(opts)
+
   @typedoc "A Julia session process or registered name."
   @type server :: GenServer.server()
 

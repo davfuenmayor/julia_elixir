@@ -41,47 +41,20 @@ First run can take several minutes because Eirene depends on PlotlyJS/WebIO and
 other packages.
 
 ```elixir
-case System.find_executable("julia") do
-  nil ->
-    {:error, "Julia is not available on PATH"}
+IO.puts("""
+First-run notice
+Internet access and a writable cache are required. Setup downloads Julia
+(about 220–320 MB) and Eirene's dependencies; allow several GB of free disk space.
+Installation and precompilation can take many minutes. Let setup finish;
+later runs reuse cached downloads and precompiled packages.
+Notebook runs are verified on Linux x86-64; native macOS, Windows and ARM64
+notebook validation is still pending.
+""")
 
-  julia ->
-    {output, status} =
-      System.cmd(
-        julia,
-        [
-          "--startup-file=no",
-          "--history-file=no",
-          "-e",
-          """
-          import Pkg
-
-          function ensure_package(name; url=nothing)
-              try
-                  Base.eval(Main, :(using $(Symbol(name))))
-                  println("$(name) already installed")
-              catch
-                  if isnothing(url)
-                      Pkg.add(name)
-                  else
-                      Pkg.add(Pkg.PackageSpec(url=url))
-                  end
-              end
-          end
-
-          ensure_package("ErlangTerm")
-          ensure_package("Eirene"; url="https://github.com/henselman-petrusek/Eirene.jl")
-          """
-        ],
-        stderr_to_stdout: true
-      )
-
-    if status == 0 do
-      :ok
-    else
-      {:error, output}
-    end
-end
+# Keep this notebook's Julia dependencies separate from other projects.
+cache = to_string(:filename.basedir(:user_cache, ~c"julia_elixir"))
+System.put_env("JULIA_PROJECT", Path.join(cache, "notebooks/eirene"))
+:ok = JuliaElixir.setup(packages: ["Eirene"])
 ```
 
 ## Start A Julia Session

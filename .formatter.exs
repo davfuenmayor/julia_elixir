@@ -1,3 +1,7 @@
 [
-  inputs: ["{mix,.formatter}.exs", "{config,lib,test}/**/*.{ex,exs}"]
+  inputs: [
+    "{mix,.formatter}.exs",
+    "priv/julia_releases.exs",
+    "{config,lib,test,scripts}/**/*.{ex,exs}"
+  ]
 ]

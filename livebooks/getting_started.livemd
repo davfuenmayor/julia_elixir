@@ -17,36 +17,17 @@ The Julia worker needs `ErlangTerm.jl`. This cell installs it into Julia's
 default environment if it is missing.
 
 ```elixir
-case System.find_executable("julia") do
-  nil ->
-    {:error, "Julia is not available on PATH"}
+IO.puts("""
+First-run notice
+Internet access and a writable cache are required. Julia downloads automatically
+(about 220–320 MB); allow roughly 2 GB of free disk space for the runtime and archive.
+Initial setup can take several minutes. Later runs reuse the cached runtime.
+Notebook runs are verified on Linux x86-64; native macOS, Windows and ARM64
+notebook validation is still pending.
+""")
 
-  julia ->
-    {_, status} =
-      System.cmd(
-        julia,
-        [
-          "--startup-file=no",
-          "--history-file=no",
-          "-e",
-          """
-          import Pkg
-          try
-              @eval using ErlangTerm
-          catch
-              Pkg.add("ErlangTerm")
-          end
-          """
-        ],
-        stderr_to_stdout: true
-      )
-
-    if status == 0 do
-      :ok
-    else
-      {:error, "Could not install ErlangTerm.jl"}
-    end
-end
+# Downloads Julia if needed; ErlangTerm is already bundled with the bridge.
+:ok = JuliaElixir.setup(packages: [])
 ```
 
 ## What This Notebook Shows
@@ -68,12 +49,12 @@ Julia REPL.
 %{
   elixir: System.version(),
   otp: :erlang.system_info(:otp_release) |> List.to_string(),
-  julia: System.find_executable("julia")
+  julia: JuliaElixir.Runtime.executable()
 }
 ```
 
 ```elixir
-System.cmd("julia", ["--version"])
+System.cmd(JuliaElixir.Runtime.executable(), ["--version"])
 ```
 
 ## Start A Session
